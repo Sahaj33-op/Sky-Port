@@ -357,3 +357,13 @@ class ProfileProcessor:
         # Simplified dungeon XP calculation
         if xp < 50: return 0
         return min(50, int(math.log(xp / 50) / math.log(2)) + 1)
+        
+    def calculate_detailed_networth(self):
+        """Calculate networth using SkyHelper integration"""
+        networth_calc = SkyHelperNetworth()
+        return networth_calc.calculate_networth(self.player_data)
+
+    def calculate_farming_weight(self):
+        """Calculate farming weight using Elite Bot integration"""
+        farming_calc = EliteFarmingWeight()
+        return farming_calc.calculate_farming_weight(self.player_data)
