@@ -4,9 +4,15 @@ import base64
 from typing import Dict, Any, List, Optional
 from datetime import datetime
 import math
+import logging
+
+# Fixed imports
+from api.skyhelper_networth import SkyHelperNetworth
+from api.elite_farming import EliteFarmingWeight
+from api.neu_repository import NEURepository
 
 class ProfileProcessor:
-    """Main processor for Hypixel SkyBlock profile data"""
+    """Enhanced profile processor with all integrations"""
     
     # XP requirements for skills (levels 0-60)
     SKILL_XP = [
@@ -40,22 +46,40 @@ class ProfileProcessor:
         self.player_data = player_data
         self.profile_data = profile_data
         self.processed_data = {}
+        self.logger = logging.getLogger(__name__)
+        
+        # Initialize integrations
+        self.skyhelper = SkyHelperNetworth()
+        self.elite_farming = EliteFarmingWeight()
+        self.neu_repo = NEURepository()
     
     def process_all_data(self) -> Dict[str, Any]:
-        """Process all profile data and return structured results"""
-        self.processed_data = {
-            'profile_info': self._process_profile_info(),
-            'skills': self._process_skills(),
-            'slayers': self._process_slayers(),
-            'dungeons': self._process_dungeons(),
-            'inventory': self._process_inventory(),
-            'collections': self._process_collections(),
-            'pets': self._process_pets(),
-            'networth': self._process_networth(),
-            'misc': self._process_misc_stats()
-        }
-        
-        return self.processed_data
+        """Process all profile data with enhanced calculations"""
+        try:
+            self.processed_data = {
+                'profile_info': self._process_profile_info(),
+                'skills': self._process_skills(),
+                'slayers': self._process_slayers(),
+                'dungeons': self._process_dungeons(),
+                'inventory': self._process_inventory(),
+                'collections': self._process_collections(),
+                'pets': self._process_pets(),
+                'networth': self._process_networth(),
+                'misc': self._process_misc_stats(),
+                
+                # Enhanced calculations
+                'detailed_networth': self.skyhelper.calculate_networth(self.player_data),
+                'farming_weight': self.elite_farming.calculate_farming_weight(self.player_data),
+                'enhanced_items': self.neu_repo.enhance_item_data(
+                    self.player_data.get('inv_contents', {})
+                )
+            }
+            
+            return self.processed_data
+            
+        except Exception as e:
+            self.logger.error(f"Error processing profile data: {e}")
+            return {}
     
     def _process_profile_info(self) -> Dict[str, Any]:
         """Process basic profile information"""

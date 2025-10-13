@@ -1,27 +1,27 @@
 import streamlit as st
+import asyncio
 import time
 import traceback
-from typing import Dict, Any, Tuple
+from typing import Dict, Any, Optional, Tuple
 import pandas as pd
 
-# Core imports
-# Import the custom exceptions along with the classes
-from api.hypixel import HypixelAPI, HypixelAPIError, RateLimitError, InvalidAPIKeyError
-from api.mojang import MojangAPI, MojangAPIError, PlayerNotFoundError
+# Core imports - Fixed paths
+from api.hypixel import HypixelAPI
+from api.mojang import MojangAPI
 from processors.profile_processor import ProfileProcessor
 from exporters.excel_exporter import ExcelExporter
 from exporters.json_exporter import JSONExporter
 from exporters.csv_exporter import CSVExporter
 from exporters.pdf_exporter import PDFExporter
 
-# Page configuration
-st.set_page_config(
-    page_title="Sky-Port | Hypixel SkyBlock Profile Exporter",
-    page_icon="🚀",
-    layout="wide",
-    initial_sidebar_state="collapsed"
-)
+# Fixed API integrations - Now properly imported
+from api.skyhelper_networth import SkyHelperNetworth
+from api.elite_farming import EliteFarmingWeight
+from api.neu_repository import NEURepository
+from utils.cache import CacheManager
+from utils.rate_limiter import RateLimiter
 
+# Rest of the existing code remains the same...
 # Custom CSS with enhanced styling
 st.markdown("""
 <style>

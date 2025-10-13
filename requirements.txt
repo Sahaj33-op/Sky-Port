@@ -1,12 +1,13 @@
-streamlit
-requests
-pandas
-xlsxwriter
-fpdf2
-NBT
-base64
-io
-json
-datetime
-asyncio
-aiohttp
+# Sky-Port Dependencies
+streamlit>=1.28.0
+requests>=2.31.0
+pandas>=2.0.0
+xlsxwriter>=3.1.0
+openpyxl>=3.1.0
+fpdf2>=2.7.0
+nbtlib>=2.0.0
+plotly>=5.17.0
+python-dateutil>=2.8.2
+Pillow>=10.0.0
+beautifulsoup4>=4.12.0
+lxml>=4.9.0
