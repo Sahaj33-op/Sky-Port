@@ -43,8 +43,8 @@ class ProfileProcessor:
     }
     
     def __init__(self, player_data: Dict[str, Any], profile_data: Dict[str, Any]):
-        self.player_data = player_data
-        self.profile_data = profile_data
+        self.player_data = player_data if isinstance(player_data, dict) else {}
+        self.profile_data = profile_data if isinstance(profile_data, dict) else {}
         self.processed_data = {}
         self.logger = logging.getLogger(__name__)
         
@@ -56,6 +56,10 @@ class ProfileProcessor:
     def process_all_data(self) -> Dict[str, Any]:
         """Process all profile data with enhanced calculations"""
         try:
+            # Ensure player_data and profile_data are dictionaries
+            player_data = self.player_data if isinstance(self.player_data, dict) else {}
+            profile_data = self.profile_data if isinstance(self.profile_data, dict) else {}
+            
             self.processed_data = {
                 'profile_info': self._process_profile_info(),
                 'skills': self._process_skills(),
@@ -67,12 +71,10 @@ class ProfileProcessor:
                 'networth': self._process_networth(),
                 'misc': self._process_misc_stats(),
                 
-                # Enhanced calculations
-                'detailed_networth': self.skyhelper.calculate_networth(self.player_data),
-                'farming_weight': self.elite_farming.calculate_farming_weight(self.player_data),
-                'enhanced_items': self.neu_repo.enhance_item_data(
-                    self.player_data.get('inv_contents', {})
-                )
+                # Enhanced calculations - with safety checks
+                'detailed_networth': self._safe_calculate_networth(player_data),
+                'farming_weight': self._safe_calculate_farming_weight(player_data),
+                'enhanced_items': self._safe_enhance_item_data(player_data)
             }
             
             return self.processed_data
@@ -81,30 +83,62 @@ class ProfileProcessor:
             self.logger.error(f"Error processing profile data: {e}")
             return {}
     
+    def _safe_calculate_networth(self, player_data: Dict[str, Any]) -> Dict[str, Any]:
+        """Safely calculate networth with error handling"""
+        try:
+            return self.skyhelper.calculate_networth(player_data)
+        except Exception as e:
+            self.logger.error(f"Error in networth calculation: {e}")
+            return {'total': 0, 'error': 'Calculation failed'}
+    
+    def _safe_calculate_farming_weight(self, player_data: Dict[str, Any]) -> Dict[str, Any]:
+        """Safely calculate farming weight with error handling"""
+        try:
+            return self.elite_farming.calculate_farming_weight(player_data)
+        except Exception as e:
+            self.logger.error(f"Error in farming weight calculation: {e}")
+            return {'total_weight': 0, 'error': 'Calculation failed'}
+    
+    def _safe_enhance_item_data(self, player_data: Dict[str, Any]) -> Dict[str, Any]:
+        """Safely enhance item data with error handling"""
+        try:
+            inv_contents = player_data.get('inv_contents', {}) if isinstance(player_data, dict) else {}
+            return self.neu_repo.enhance_item_data(inv_contents)
+        except Exception as e:
+            self.logger.error(f"Error in item data enhancement: {e}")
+            return {'items': [], 'error': 'Enhancement failed'}
+    
     def _process_profile_info(self) -> Dict[str, Any]:
         """Process basic profile information"""
-        last_save = self.player_data.get('last_save', 0)
+        # Ensure player_data is a dictionary
+        player_data = self.player_data if isinstance(self.player_data, dict) else {}
+        profile_data = self.profile_data if isinstance(self.profile_data, dict) else {}
+        
+        last_save = player_data.get('last_save', 0) if isinstance(player_data, dict) else 0
         
         return {
             'data': [{
-                'profile_name': self.profile_data.get('cute_name', 'Unknown'),
-                'game_mode': self.profile_data.get('game_mode', 'normal'),
+                'profile_name': profile_data.get('cute_name', 'Unknown') if isinstance(profile_data, dict) else 'Unknown',
+                'game_mode': profile_data.get('game_mode', 'normal') if isinstance(profile_data, dict) else 'normal',
                 'last_save': datetime.fromtimestamp(last_save / 1000).strftime('%Y-%m-%d %H:%M:%S') if last_save else 'Unknown',
-                'fairy_souls': self.player_data.get('fairy_souls_collected', 0),
-                'fairy_exchanges': self.player_data.get('fairy_exchanges', 0),
-                'deaths': self.player_data.get('stats', {}).get('deaths', 0)
+                'fairy_souls': player_data.get('fairy_souls_collected', 0) if isinstance(player_data, dict) else 0,
+                'fairy_exchanges': player_data.get('fairy_exchanges', 0) if isinstance(player_data, dict) else 0,
+                'deaths': player_data.get('stats', {}).get('deaths', 0) if isinstance(player_data, dict) and isinstance(player_data.get('stats', {}), dict) else 0
             }],
             'summary': {
-                'profile_name': self.profile_data.get('cute_name', 'Unknown'),
-                'game_mode': self.profile_data.get('game_mode', 'normal'),
+                'profile_name': profile_data.get('cute_name', 'Unknown') if isinstance(profile_data, dict) else 'Unknown',
+                'game_mode': profile_data.get('game_mode', 'normal') if isinstance(profile_data, dict) else 'normal',
                 'last_active': datetime.fromtimestamp(last_save / 1000) if last_save else None
             }
         }
     
     def _process_skills(self) -> Dict[str, Any]:
         """Process skills data including levels and XP"""
+        # Ensure player_data is a dictionary
+        player_data = self.player_data if isinstance(self.player_data, dict) else {}
+        
         skills_data = []
-        skill_xp = self.player_data.get('experience_skill', {})
+        skill_xp = player_data.get('experience_skill', {}) if isinstance(player_data, dict) else {}
         
         skills = ['farming', 'mining', 'combat', 'foraging', 'fishing', 'enchanting', 'alchemy', 'carpentry', 'runecrafting', 'taming', 'social']
         
@@ -112,7 +146,7 @@ class ProfileProcessor:
         counted_skills = 0
         
         for skill in skills:
-            xp = skill_xp.get(f'SKILL_{skill.upper()}', 0)
+            xp = skill_xp.get(f'SKILL_{skill.upper()}', 0) if isinstance(skill_xp, dict) else 0
             level = self._calculate_skill_level(xp)
             
             skills_data.append({
@@ -142,16 +176,19 @@ class ProfileProcessor:
     
     def _process_slayers(self) -> Dict[str, Any]:
         """Process slayer boss data"""
+        # Ensure player_data is a dictionary
+        player_data = self.player_data if isinstance(self.player_data, dict) else {}
+        
         slayers_data = []
-        slayer_bosses = self.player_data.get('slayer_bosses', {})
+        slayer_bosses = player_data.get('slayer_bosses', {}) if isinstance(player_data, dict) else {}
         
         for slayer_type, display_name in self.SLAYERS.items():
-            slayer_data = slayer_bosses.get(slayer_type, {})
-            xp = slayer_data.get('xp', 0)
+            slayer_data = slayer_bosses.get(slayer_type, {}) if isinstance(slayer_bosses, dict) else {}
+            xp = slayer_data.get('xp', 0) if isinstance(slayer_data, dict) else 0
             
             boss_kills = {}
             for tier in range(1, 5):  # Tiers 1-4
-                boss_kills[f'tier_{tier}'] = slayer_data.get('boss_kills_tier_{}'.format(tier), 0)
+                boss_kills[f'tier_{tier}'] = slayer_data.get('boss_kills_tier_{}'.format(tier), 0) if isinstance(slayer_data, dict) else 0
             
             slayers_data.append({
                 'slayer': display_name,
@@ -177,29 +214,33 @@ class ProfileProcessor:
     
     def _process_dungeons(self) -> Dict[str, Any]:
         """Process dungeon data including catacombs and classes"""
-        dungeons = self.player_data.get('dungeons', {})
+        # Ensure player_data is a dictionary
+        player_data = self.player_data if isinstance(self.player_data, dict) else {}
+        
+        dungeons = player_data.get('dungeons', {}) if isinstance(player_data, dict) else {}
         dungeon_data = []
         
         # Catacombs data
-        catacombs = dungeons.get('dungeon_types', {}).get('catacombs', {})
-        cata_xp = catacombs.get('experience', 0)
+        dungeon_types = dungeons.get('dungeon_types', {}) if isinstance(dungeons, dict) else {}
+        catacombs = dungeon_types.get('catacombs', {}) if isinstance(dungeon_types, dict) else {}
+        cata_xp = catacombs.get('experience', 0) if isinstance(catacombs, dict) else 0
         cata_level = self._calculate_dungeon_level(cata_xp)
         
         dungeon_data.append({
             'type': 'Catacombs',
             'level': cata_level,
             'xp': cata_xp,
-            'highest_floor': catacombs.get('highest_tier_completed', 0)
+            'highest_floor': catacombs.get('highest_tier_completed', 0) if isinstance(catacombs, dict) else 0
         })
         
         # Class data
         classes = ['healer', 'mage', 'berserk', 'archer', 'tank']
         class_data = []
         
-        player_classes = dungeons.get('player_classes', {})
+        player_classes = dungeons.get('player_classes', {}) if isinstance(dungeons, dict) else {}
         for class_name in classes:
-            class_info = player_classes.get(class_name, {})
-            class_xp = class_info.get('experience', 0)
+            class_info = player_classes.get(class_name, {}) if isinstance(player_classes, dict) else {}
+            class_xp = class_info.get('experience', 0) if isinstance(class_info, dict) else 0
             class_level = self._calculate_dungeon_level(class_xp)
             
             class_data.append({
@@ -212,13 +253,16 @@ class ProfileProcessor:
             'data': dungeon_data + class_data,
             'summary': {
                 'catacombs_level': cata_level,
-                'highest_floor': catacombs.get('highest_tier_completed', 0),
-                'total_runs': sum([catacombs.get('tier_completions', {}).get(str(i), 0) for i in range(8)])
+                'highest_floor': catacombs.get('highest_tier_completed', 0) if isinstance(catacombs, dict) else 0,
+                'total_runs': sum([catacombs.get('tier_completions', {}).get(str(i), 0) for i in range(8)]) if isinstance(catacombs, dict) and isinstance(catacombs.get('tier_completions', {}), dict) else 0
             }
         }
     
     def _process_inventory(self) -> Dict[str, Any]:
         """Process inventory data (simplified without NBT parsing for now)"""
+        # Ensure player_data is a dictionary
+        player_data = self.player_data if isinstance(self.player_data, dict) else {}
+        
         inventory_types = {
             'inv_contents': 'Main Inventory',
             'ender_chest_contents': 'Ender Chest',
@@ -229,14 +273,18 @@ class ProfileProcessor:
         inventory_data = []
         
         for inv_type, display_name in inventory_types.items():
-            if inv_type in self.player_data:
-                inv_data = self.player_data[inv_type]
-                item_count = len(inv_data.get('data', '')) // 2 if 'data' in inv_data else 0
+            if inv_type in player_data and isinstance(player_data, dict):
+                inv_data = player_data[inv_type]
+                # Ensure inv_data is a dictionary before calling .get()
+                if isinstance(inv_data, dict):
+                    item_count = len(inv_data.get('data', '')) // 2 if 'data' in inv_data else 0
+                else:
+                    item_count = 0
                 
                 inventory_data.append({
                     'inventory_type': display_name,
                     'estimated_items': item_count,
-                    'last_updated': 'Available' if inv_type in self.player_data else 'Not Available'
+                    'last_updated': 'Available' if inv_type in player_data else 'Not Available'
                 })
         
         return {
@@ -249,15 +297,22 @@ class ProfileProcessor:
     
     def _process_collections(self) -> Dict[str, Any]:
         """Process collection data"""
+        # Ensure player_data is a dictionary
+        player_data = self.player_data if isinstance(self.player_data, dict) else {}
+        
         collections_data = []
-        unlocked_tiers = self.player_data.get('unlocked_coll_tiers', [])
-        collection_xp = self.player_data.get('collection', {})
+        unlocked_tiers = player_data.get('unlocked_coll_tiers', []) if isinstance(player_data, dict) else []
+        collection_xp = player_data.get('collection', {}) if isinstance(player_data, dict) else {}
         
         # Process each collection category
         for category, items in self.COLLECTION_CATEGORIES.items():
             for item in items:
-                amount = collection_xp.get(item, 0)
-                max_tier = max([int(tier.split('_')[-1]) for tier in unlocked_tiers if tier.startswith(f'{item}_')], default=0)
+                amount = collection_xp.get(item, 0) if isinstance(collection_xp, dict) else 0
+                # Ensure unlocked_tiers is a list before processing
+                if isinstance(unlocked_tiers, list):
+                    max_tier = max([int(tier.split('_')[-1]) for tier in unlocked_tiers if isinstance(tier, str) and tier.startswith(f'{item}_')], default=0)
+                else:
+                    max_tier = 0
                 
                 if amount > 0 or max_tier > 0:  # Only include collections with progress
                     collections_data.append({
@@ -278,35 +333,49 @@ class ProfileProcessor:
     
     def _process_pets(self) -> Dict[str, Any]:
         """Process pets data"""
-        pets_data = self.player_data.get('pets', [])
+        # Ensure player_data is a dictionary
+        player_data = self.player_data if isinstance(self.player_data, dict) else {}
+        
+        pets_data = player_data.get('pets', []) if isinstance(player_data, dict) else []
+        # Ensure pets_data is a list
+        if not isinstance(pets_data, list):
+            pets_data = []
+        
         processed_pets = []
         
         for pet in pets_data:
-            processed_pets.append({
-                'type': pet.get('type', 'Unknown'),
-                'tier': pet.get('tier', 'COMMON'),
-                'level': pet.get('level', 1),
-                'xp': pet.get('exp', 0),
-                'active': pet.get('active', False),
-                'held_item': pet.get('heldItem', None)
-            })
+            # Ensure pet is a dictionary before calling .get()
+            if isinstance(pet, dict):
+                processed_pets.append({
+                    'type': pet.get('type', 'Unknown'),
+                    'tier': pet.get('tier', 'COMMON'),
+                    'level': pet.get('level', 1),
+                    'xp': pet.get('exp', 0),
+                    'active': pet.get('active', False),
+                    'held_item': pet.get('heldItem', None)
+                })
         
         return {
             'data': processed_pets,
             'summary': {
                 'total_pets': len(processed_pets),
-                'legendary_pets': len([p for p in processed_pets if p['tier'] == 'LEGENDARY']),
-                'active_pet': next((p['type'] for p in processed_pets if p['active']), 'None')
+                'legendary_pets': len([p for p in processed_pets if isinstance(p, dict) and p.get('tier') == 'LEGENDARY']),
+                'active_pet': next((p['type'] for p in processed_pets if isinstance(p, dict) and p.get('active')), 'None')
             }
         }
     
     def _process_networth(self) -> Dict[str, Any]:
         """Process networth data (placeholder - would integrate with SkyHelper)"""
+        # Ensure player_data and profile_data are dictionaries
+        player_data = self.player_data if isinstance(self.player_data, dict) else {}
+        profile_data = self.profile_data if isinstance(self.profile_data, dict) else {}
+        
         # This would integrate with the SkyHelper Networth library
         # For now, providing basic coin data
         
-        purse = self.player_data.get('coin_purse', 0)
-        bank = self.profile_data.get('banking', {}).get('balance', 0)
+        purse = player_data.get('coin_purse', 0) if isinstance(player_data, dict) else 0
+        banking_data = profile_data.get('banking', {}) if isinstance(profile_data, dict) else {}
+        bank = banking_data.get('balance', 0) if isinstance(banking_data, dict) else 0
         
         return {
             'data': [{
@@ -324,21 +393,24 @@ class ProfileProcessor:
     
     def _process_misc_stats(self) -> Dict[str, Any]:
         """Process miscellaneous statistics"""
-        stats = self.player_data.get('stats', {})
-        objectives = self.player_data.get('objectives', {})
+        # Ensure player_data is a dictionary
+        player_data = self.player_data if isinstance(self.player_data, dict) else {}
+        
+        stats = player_data.get('stats', {}) if isinstance(player_data, dict) else {}
+        objectives = player_data.get('objectives', {}) if isinstance(player_data, dict) else {}
         
         return {
             'data': [{
-                'deaths': stats.get('deaths', 0),
-                'kills': stats.get('kills', 0),
-                'items_fished': stats.get('items_fished', 0),
-                'pet_milestone_ores_mined': stats.get('pet_milestone_ores_mined', 0),
-                'auctions_bids': stats.get('auctions_bids', 0),
-                'auctions_won': stats.get('auctions_won', 0)
+                'deaths': stats.get('deaths', 0) if isinstance(stats, dict) else 0,
+                'kills': stats.get('kills', 0) if isinstance(stats, dict) else 0,
+                'items_fished': stats.get('items_fished', 0) if isinstance(stats, dict) else 0,
+                'pet_milestone_ores_mined': stats.get('pet_milestone_ores_mined', 0) if isinstance(stats, dict) else 0,
+                'auctions_bids': stats.get('auctions_bids', 0) if isinstance(stats, dict) else 0,
+                'auctions_won': stats.get('auctions_won', 0) if isinstance(stats, dict) else 0
             }],
             'summary': {
-                'total_objectives': len(objectives),
-                'completed_objectives': len([o for o in objectives.values() if o.get('status') == 'COMPLETE'])
+                'total_objectives': len(objectives) if isinstance(objectives, dict) else 0,
+                'completed_objectives': len([o for o in objectives.values() if isinstance(o, dict) and o.get('status') == 'COMPLETE']) if isinstance(objectives, dict) else 0
             }
         }
     
@@ -385,9 +457,9 @@ class ProfileProcessor:
     def calculate_detailed_networth(self):
         """Calculate networth using SkyHelper integration"""
         networth_calc = SkyHelperNetworth()
-        return networth_calc.calculate_networth(self.player_data)
+        return networth_calc.calculate_networth(self.player_data if isinstance(self.player_data, dict) else {})
 
     def calculate_farming_weight(self):
         """Calculate farming weight using Elite Bot integration"""
         farming_calc = EliteFarmingWeight()
-        return farming_calc.calculate_farming_weight(self.player_data)
+        return farming_calc.calculate_farming_weight(self.player_data if isinstance(self.player_data, dict) else {})

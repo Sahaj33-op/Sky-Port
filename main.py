@@ -1,13 +1,13 @@
 import streamlit as st
+import asyncio
 import time
 import traceback
 from typing import Dict, Any, Optional, Tuple
 import pandas as pd
-from datetime import datetime
 
 # Core imports - Fixed paths
-from api.hypixel import HypixelAPI
-from api.mojang import MojangAPI
+from api.hypixel import HypixelAPI, HypixelAPIError, RateLimitError, InvalidAPIKeyError
+from api.mojang import MojangAPI, MojangAPIError, PlayerNotFoundError
 from processors.profile_processor import ProfileProcessor
 from exporters.excel_exporter import ExcelExporter
 from exporters.json_exporter import JSONExporter
@@ -51,11 +51,10 @@ st.markdown("""
     }
     
     .profile-name {
-        font-size: 1.8rem;
-        font-weight: 700;
+        font-size: 1.5rem;
+        font-weight: 600;
         color: #1f77b4;
-        margin-bottom: 1rem;
-        text-align: center;
+        margin-bottom: 0.5rem;
     }
     
     .profile-stats {
@@ -64,10 +63,7 @@ st.markdown("""
         margin-top: 1rem;
     }
     
-    .metric-highlight {
-        background: white;
-        padding: 1rem;
-        border-radius: 8px;
+    .stat-item {
         text-align: center;
     }
     
@@ -110,6 +106,7 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
+# Initialize session state
 def initialize_session_state():
     """Initialize all session state variables"""
     if 'processed_data' not in st.session_state:
@@ -130,28 +127,37 @@ def display_profiles(profiles):
     st.markdown("## 📋 SkyBlock Profiles")
     
     if not profiles:
-        st.info("🔍 No SkyBlock profiles found for this player.")
+        st.info("No profiles found for this player.")
+        return
+    
+    # Ensure profiles is a list
+    if not isinstance(profiles, list):
+        st.error("❌ Error: Profiles data is not in the expected format.")
         return
     
     cols = st.columns(2)
     
     for i, profile in enumerate(profiles):
+        # Ensure profile is a dictionary
+        if not isinstance(profile, dict):
+            continue
+            
         with cols[i % 2]:
             profile_name = profile.get('cute_name', 'Unknown')
             game_mode = profile.get('game_mode', 'normal')
             members = profile.get('members', {})
-            members_count = len(members)
+            members_count = len(members) if isinstance(members, dict) else 0
             
             # Get the first member's data for basic stats
             fairy_souls = 0
             first_member_data = {}
             
-            if members:
+            if isinstance(members, dict) and members:
                 # Get the first member's UUID and data
                 first_member_uuid = list(members.keys())[0]
                 first_member_data = members.get(first_member_uuid, {})
                 # Correct way to get fairy souls - it's in the player's profile data, not members
-                fairy_souls = first_member_data.get('fairy_souls_collected', 0)
+                fairy_souls = first_member_data.get('fairy_souls_collected', 0) if isinstance(first_member_data, dict) else 0
             
             with st.container():
                 st.markdown(f"""
@@ -185,11 +191,29 @@ def process_selected_profile():
                 # Get the selected profile
                 selected_profile = st.session_state.selected_profile
                 
+                # Ensure selected_profile is a dictionary
+                if not isinstance(selected_profile, dict):
+                    st.error("❌ Error: Selected profile data is not in the expected format.")
+                    st.session_state.processing_status = None
+                    return
+                
                 # Extract the player data for the selected profile
                 # The player data is in the 'members' section of the profile
                 members = selected_profile.get('members', {})
+                # Ensure members is a dictionary
+                if not isinstance(members, dict):
+                    st.error("❌ Error: Profile members data is not in the expected format.")
+                    st.session_state.processing_status = None
+                    return
+                    
                 player_uuid = list(members.keys())[0] if members else None
                 player_data = members.get(player_uuid, {}) if player_uuid else {}
+                
+                # Ensure player_data is a dictionary
+                if not isinstance(player_data, dict):
+                    st.error("❌ Error: Player data is not in the expected format.")
+                    st.session_state.processing_status = None
+                    return
                 
                 # Process the profile data
                 processor = ProfileProcessor(player_data, selected_profile)
@@ -213,21 +237,31 @@ def display_processed_data():
         
         # Display profile info
         profile_info = processed_data.get('profile_info', {})
-        if profile_info and profile_info.get('data'):
-            info = profile_info['data'][0]
-            st.markdown(f"### {info.get('profile_name', 'Unknown Profile')}")
-            col1, col2, col3 = st.columns(3)
-            with col1:
-                st.metric("Game Mode", info.get('game_mode', 'Unknown'))
-            with col2:
-                st.metric("Fairy Souls", info.get('fairy_souls', 0))
-            with col3:
-                st.metric("Last Save", info.get('last_save', 'Unknown'))
+        if profile_info and isinstance(profile_info, dict) and profile_info.get('data'):
+            info_data = profile_info['data']
+            # Ensure info_data is a list and has at least one element
+            if isinstance(info_data, list) and len(info_data) > 0:
+                info = info_data[0]
+                # Ensure info is a dictionary
+                if isinstance(info, dict):
+                    st.markdown(f"### {info.get('profile_name', 'Unknown Profile')}")
+                    col1, col2, col3 = st.columns(3)
+                    with col1:
+                        st.metric("Game Mode", info.get('game_mode', 'Unknown'))
+                    with col2:
+                        st.metric("Fairy Souls", info.get('fairy_souls', 0))
+                    with col3:
+                        st.metric("Last Save", info.get('last_save', 'Unknown'))
 
 def display_export_options():
     """Display export options for processed data"""
     if st.session_state.processed_data and st.session_state.processing_status == "completed":
         st.markdown("## 📤 Export Options")
+        
+        # Ensure processed_data is a dictionary
+        if not isinstance(st.session_state.processed_data, dict):
+            st.error("❌ Error: Processed data is not in the expected format.")
+            return
         
         with st.container():
             st.markdown('<div class="export-section">', unsafe_allow_html=True)
@@ -305,7 +339,6 @@ def main():
     """Enhanced main application function"""
     initialize_session_state()
     
-    # Header
     st.markdown('<h1 class="main-header">🚀 Sky-Port</h1>', unsafe_allow_html=True)
     st.markdown('<p style="text-align: center; font-size: 1.2rem; color: #666;">Comprehensive Hypixel SkyBlock Profile Exporter</p>', unsafe_allow_html=True)
     
@@ -321,7 +354,6 @@ def main():
             return
     
     col1, col2 = st.columns([3, 1])
-    
     with col1:
         username = st.text_input("🎮 Player Username", placeholder="Enter Minecraft username...")
     with col2:
@@ -345,14 +377,19 @@ def main():
                 player_data = hypixel_client.get_player(uuid)
                 skyblock_data = hypixel_client.get_skyblock_profiles(uuid)
                 
-                if not skyblock_data or not skyblock_data.get('profiles'):
+                # Ensure skyblock_data is a dictionary and has profiles
+                if not isinstance(skyblock_data, dict) or 'profiles' not in skyblock_data or not skyblock_data['profiles']:
                     st.error("❌ No SkyBlock profiles found for this player.")
-                    st.info("This player may not have played SkyBlock or their profiles are private.")
                     return
                 
-                # Store data
+                # Ensure profiles is a list
+                profiles = skyblock_data['profiles']
+                if not isinstance(profiles, list):
+                    st.error("❌ SkyBlock profiles data is not in the expected format.")
+                    return
+                
                 st.session_state.player_data = player_data
-                st.session_state.skyblock_profiles = skyblock_data['profiles']
+                st.session_state.skyblock_profiles = profiles
                 st.success("✅ Profiles fetched successfully!")
 
             # CATCH THE SPECIFIC ERRORS
@@ -368,7 +405,7 @@ def main():
     if st.session_state.skyblock_profiles:
         display_profiles(st.session_state.skyblock_profiles)
     
-    # Process selected profile
+    # Process selected profile if needed
     process_selected_profile()
     
     # Display processed data if available
