@@ -185,39 +185,39 @@ def process_selected_profile():
     """Process the selected profile and display results"""
     if st.session_state.selected_profile and st.session_state.processing_status == "processing":
         st.markdown("## 🔄 Processing Profile")
-        
+
         with st.spinner("Processing profile data..."):
             try:
-                # Get the selected profile
                 selected_profile = st.session_state.selected_profile
+                player_data = st.session_state.player_data # Use the full player data object
                 
-                # Ensure selected_profile is a dictionary
-                if not isinstance(selected_profile, dict):
-                    st.error("❌ Error: Selected profile data is not in the expected format.")
+                if not isinstance(selected_profile, dict) or not isinstance(player_data, dict):
+                    st.error("❌ Error: Profile or player data is not in the expected format.")
+                    st.session_state.processing_status = None
+                    return
+
+                # Find the specific profile data from the list of profiles
+                profile_id = selected_profile.get('profile_id')
+                profile_data = next((p for p in st.session_state.skyblock_profiles if p.get('profile_id') == profile_id), None)
+
+                if not profile_data:
+                    st.error("❌ Error: Could not find the selected profile data.")
                     st.session_state.processing_status = None
                     return
                 
-                # Extract the player data for the selected profile
-                # The player data is in the 'members' section of the profile
-                members = selected_profile.get('members', {})
-                # Ensure members is a dictionary
-                if not isinstance(members, dict):
-                    st.error("❌ Error: Profile members data is not in the expected format.")
+                # The actual member data for the player is inside the 'members' dict of the profile
+                player_uuid = player_data.get('player', {}).get('uuid')
+                member_data = profile_data.get('members', {}).get(player_uuid)
+
+                if not member_data:
+                    st.error("❌ Error: Could not find member data for this profile.")
                     st.session_state.processing_status = None
                     return
-                    
-                player_uuid = list(members.keys())[0] if members else None
-                player_data = members.get(player_uuid, {}) if player_uuid else {}
-                
-                # Ensure player_data is a dictionary
-                if not isinstance(player_data, dict):
-                    st.error("❌ Error: Player data is not in the expected format.")
-                    st.session_state.processing_status = None
-                    return
-                
-                # Process the profile data
-                processor = ProfileProcessor(player_data, selected_profile)
+
+                # Initialize the processor with the correct data
+                processor = ProfileProcessor(member_data, profile_data)
                 processed_data = processor.process_all_data()
+                
                 st.session_state.processed_data = processed_data
                 st.session_state.processing_status = "completed"
                 
