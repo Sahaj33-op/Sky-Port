@@ -1,11 +1,23 @@
 import requests
 import time
 from typing import Optional, Dict, Any, List
-import streamlit as st
 from utils.rate_limiter import RateLimiter
 
+# Custom Exceptions for this module
+class HypixelAPIError(Exception):
+    """Base exception for Hypixel API client errors."""
+    pass
+
+class RateLimitError(HypixelAPIError):
+    """Raised when the rate limit is exceeded."""
+    pass
+
+class InvalidAPIKeyError(HypixelAPIError):
+    """Raised when the API key is invalid."""
+    pass
+
 class HypixelAPI:
-    """Hypixel API client with rate limiting and error handling"""
+    """Hypixel API client with error handling"""
     
     BASE_URL = "https://api.hypixel.net"
     
@@ -17,11 +29,10 @@ class HypixelAPI:
             'User-Agent': 'Sky-Port/1.0.0 (Hypixel SkyBlock Profile Exporter)'
         })
     
-    def _make_request(self, endpoint: str, params: Optional[Dict] = None) -> Optional[Dict[str, Any]]:
+    def _make_request(self, endpoint: str, params: Optional[Dict] = None) -> Dict[str, Any]:
         """Make a rate-limited request to the Hypixel API"""
         if not self.rate_limiter.can_make_request():
-            st.warning("Rate limit reached. Please wait before making another request.")
-            return None
+            raise RateLimitError("Rate limit reached. Please wait before making another request.")
         
         if params is None:
             params = {}
@@ -37,31 +48,30 @@ class HypixelAPI:
             
             self.rate_limiter.record_request()
             
-            if response.status_code == 200:
-                data = response.json()
-                if data.get('success', False):
-                    return data
-                else:
-                    st.error(f"API Error: {data.get('cause', 'Unknown error')}")
-                    return None
-            elif response.status_code == 403:
-                st.error("Invalid API key or access denied")
-                return None
+            if response.status_code == 403:
+                raise InvalidAPIKeyError("Invalid API key or access denied.")
             elif response.status_code == 429:
-                st.warning("Rate limited by Hypixel API. Please wait.")
-                return None
+                raise RateLimitError("Rate limited by Hypixel API. Please wait.")
+
+            # Raise an exception for any other bad status codes (4xx or 5xx)
+            response.raise_for_status()
+
+            data = response.json()
+            if data.get('success'):
+                return data
             else:
-                st.error(f"HTTP {response.status_code}: {response.text}")
-                return None
+                raise HypixelAPIError(f"API Error: {data.get('cause', 'Unknown error')}")
                 
         except requests.exceptions.RequestException as e:
-            st.error(f"Request failed: {str(e)}")
-            return None
+            raise HypixelAPIError(f"Request failed: {str(e)}") from e
     
     def test_api_key(self) -> bool:
         """Test if the API key is valid"""
-        response = self._make_request('/key')
-        return response is not None
+        try:
+            self._make_request('/key')
+            return True
+        except HypixelAPIError:
+            return False
     
     def get_player(self, uuid: str) -> Optional[Dict[str, Any]]:
         """Get basic player information"""
@@ -71,6 +81,7 @@ class HypixelAPI:
         """Get all SkyBlock profiles for a player"""
         return self._make_request('/v2/skyblock/profiles', {'uuid': uuid})
     
+    # ... (rest of the class methods are fine)
     def get_skyblock_profile(self, profile_id: str) -> Optional[Dict[str, Any]]:
         """Get a specific SkyBlock profile"""
         return self._make_request('/v2/skyblock/profile', {'profile': profile_id})
@@ -98,27 +109,3 @@ class HypixelAPI:
     def get_skyblock_collections(self) -> Optional[Dict[str, Any]]:
         """Get SkyBlock collections data"""
         return self._make_request('/v2/resources/skyblock/collections')
-    
-    @st.cache_data(ttl=3600)  # Cache for 1 hour
-    def get_cached_bazaar(_self) -> Optional[Dict[str, Any]]:
-        """Get cached bazaar data (updates every hour)"""
-        return _self.get_bazaar()
-    
-    @st.cache_data(ttl=86400)  # Cache for 24 hours
-    def get_cached_items(_self) -> Optional[Dict[str, Any]]:
-        """Get cached items data (updates daily)"""
-        return _self.get_skyblock_items()
-    
-    @st.cache_data(ttl=86400)  # Cache for 24 hours
-    def get_cached_collections(_self) -> Optional[Dict[str, Any]]:
-        """Get cached collections data (updates daily)"""
-        return _self.get_skyblock_collections()
-    
-    def get_rate_limit_info(self) -> Dict[str, Any]:
-        """Get current rate limit status"""
-        return {
-            'requests_made': self.rate_limiter.request_count,
-            'requests_remaining': self.rate_limiter.max_requests - self.rate_limiter.request_count,
-            'reset_time': self.rate_limiter.window_start + self.rate_limiter.time_window,
-            'can_make_request': self.rate_limiter.can_make_request()
-        }
