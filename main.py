@@ -1,28 +1,46 @@
 import streamlit as st
-import asyncio
 import time
 import traceback
 from typing import Dict, Any, Optional, Tuple
 import pandas as pd
 
-# Core imports - Fixed paths
-from api.hypixel import HypixelAPI
-from api.mojang import MojangAPI
+# Core imports - FIXED PATHS TO MATCH ACTUAL FILE STRUCTURE
+from api.hypixel import HypixelAPI, HypixelAPIError, RateLimitError, InvalidAPIKeyError
+from api.mojang import MojangAPI, MojangAPIError, PlayerNotFoundError
 from processors.profile_processor import ProfileProcessor
 from exporters.excel_exporter import ExcelExporter
 from exporters.json_exporter import JSONExporter
 from exporters.csv_exporter import CSVExporter
 from exporters.pdf_exporter import PDFExporter
 
-# Fixed API integrations - Now properly imported
-from api.skyhelper_networth import SkyHelperNetworth
-from api.elite_farming import EliteFarmingWeight
-from api.neu_repository import NEURepository
-from utils.cache import CacheManager
-from utils.rate_limiter import RateLimiter
+# Enhanced API integrations - OPTIONAL IMPORTS WITH ERROR HANDLING
+try:
+    from api.skyhelper_networth import SkyHelperNetworth
+    SKYHELPER_AVAILABLE = True
+except ImportError:
+    SKYHELPER_AVAILABLE = False
+    
+try:
+    from api.elite_farming import EliteFarmingWeight  
+    ELITE_FARMING_AVAILABLE = True
+except ImportError:
+    ELITE_FARMING_AVAILABLE = False
 
-# Rest of the existing code remains the same...
-# Custom CSS with enhanced styling
+try:
+    from api.neu_repository import NEURepository
+    NEU_AVAILABLE = True
+except ImportError:
+    NEU_AVAILABLE = False
+
+# Page configuration
+st.set_page_config(
+    page_title="Sky-Port | Hypixel SkyBlock Profile Exporter",
+    page_icon="🚀",
+    layout="wide",
+    initial_sidebar_state="collapsed"
+)
+
+# Enhanced CSS
 st.markdown("""
 <style>
     .main-header {
@@ -39,15 +57,16 @@ st.markdown("""
     .profile-card {
         border: 1px solid #e0e0e0;
         border-radius: 10px;
-        padding: 1rem;
+        padding: 1.5rem;
         margin: 1rem 0;
-        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-        transition: transform 0.2s;
+        background: white;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        transition: all 0.3s ease;
     }
     
     .profile-card:hover {
-        transform: translateY(-3px);
-        box-shadow: 0 4px 8px rgba(0,0,0,0.15);
+        transform: translateY(-2px);
+        box-shadow: 0 4px 16px rgba(0,0,0,0.15);
     }
     
     .profile-name {
@@ -57,318 +76,535 @@ st.markdown("""
         margin-bottom: 0.5rem;
     }
     
-    .profile-stats {
-        display: flex;
-        justify-content: space-between;
-        margin-top: 1rem;
-    }
-    
-    .stat-item {
-        text-align: center;
-    }
-    
-    .stat-value {
-        font-size: 1.2rem;
-        font-weight: 700;
-        color: #ff7f0e;
-    }
-    
-    .stat-label {
-        font-size: 0.9rem;
-        color: #666;
-    }
-    
-    .processing-section {
-        background-color: #f8f9fa;
-        border-radius: 10px;
-        padding: 1.5rem;
-        margin-top: 2rem;
-    }
-    
     .export-section {
-        background-color: #f8f9fa;
-        border-radius: 10px;
-        padding: 1.5rem;
-        margin-top: 2rem;
+        background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%);
+        border-radius: 15px;
+        padding: 2rem;
+        margin: 2rem 0;
+        border: 1px solid #dee2e6;
     }
     
-    .export-buttons {
-        display: flex;
-        gap: 1rem;
-        flex-wrap: wrap;
-        margin-top: 1rem;
+    .metric-highlight {
+        background: white;
+        padding: 1rem;
+        border-radius: 8px;
+        text-align: center;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        margin: 0.5rem 0;
     }
     
-    .export-button {
-        flex: 1;
-        min-width: 120px;
+    .status-success {
+        background-color: #d4edda;
+        border: 1px solid #c3e6cb;
+        color: #155724;
+        padding: 1rem;
+        border-radius: 8px;
+        margin: 1rem 0;
+    }
+    
+    .status-error {
+        background-color: #f8d7da;
+        border: 1px solid #f5c6cb;
+        color: #721c24;
+        padding: 1rem;
+        border-radius: 8px;
+        margin: 1rem 0;
     }
 </style>
 """, unsafe_allow_html=True)
 
-# Initialize session state
 def initialize_session_state():
     """Initialize all session state variables"""
-    if 'processed_data' not in st.session_state:
-        st.session_state.processed_data = None
-    if 'player_data' not in st.session_state:
-        st.session_state.player_data = None
-    if 'skyblock_profiles' not in st.session_state:
-        st.session_state.skyblock_profiles = None
-    if 'selected_profile' not in st.session_state:
-        st.session_state.selected_profile = None
-    if 'processing_status' not in st.session_state:
-        st.session_state.processing_status = None
-    if 'export_ready' not in st.session_state:
-        st.session_state.export_ready = False
+    defaults = {
+        'processed_data': None,
+        'player_data': None,
+        'skyblock_profiles': None,
+        'selected_profile': None,
+        'processing_status': None,
+        'export_ready': False,
+        'player_uuid': None,
+        'selected_profile_index': None
+    }
+    
+    for key, value in defaults.items():
+        if key not in st.session_state:
+            st.session_state[key] = value
+
+def display_feature_status():
+    """Display which enhanced features are available"""
+    with st.expander("🔧 Enhanced Features Status", expanded=False):
+        col1, col2, col3 = st.columns(3)
+        
+        with col1:
+            status = "✅ Available" if SKYHELPER_AVAILABLE else "❌ Not Available"
+            st.write(f"**SkyHelper Networth:** {status}")
+        
+        with col2:
+            status = "✅ Available" if ELITE_FARMING_AVAILABLE else "❌ Not Available"
+            st.write(f"**Elite Farming Weight:** {status}")
+        
+        with col3:
+            status = "✅ Available" if NEU_AVAILABLE else "❌ Not Available"
+            st.write(f"**NEU Repository:** {status}")
+        
+        if not (SKYHELPER_AVAILABLE or ELITE_FARMING_AVAILABLE or NEU_AVAILABLE):
+            st.info("💡 Enhanced features will be available once the API integrations are configured.")
 
 def display_profiles(profiles):
-    """Display the fetched profiles in a user-friendly format"""
-    st.markdown("## 📋 SkyBlock Profiles")
+    """Display profiles in an enhanced format"""
+    st.markdown("## 📋 Select SkyBlock Profile")
     
     if not profiles:
         st.info("No profiles found for this player.")
         return
     
-    cols = st.columns(2)
-    
+    # Create profile cards
     for i, profile in enumerate(profiles):
-        with cols[i % 2]:
-            profile_name = profile.get('cute_name', 'Unknown')
-            game_mode = profile.get('game_mode', 'normal')
-            members = profile.get('members', {})
-            members_count = len(members)
-            
-            # Get the first member's data for basic stats
-            fairy_souls = 0
-            first_member_data = {}
-            
-            if members:
-                # Get the first member's UUID and data
-                first_member_uuid = list(members.keys())[0]
-                first_member_data = members.get(first_member_uuid, {})
-                # Correct way to get fairy souls - it's in the player's profile data, not members
-                fairy_souls = first_member_data.get('fairy_souls_collected', 0)
-            
-            with st.container():
-                st.markdown(f"""
-                <div class="profile-card">
-                    <div class="profile-name">{profile_name}</div>
-                    <div><strong>Mode:</strong> {game_mode.title()}</div>
-                    <div><strong>Members:</strong> {members_count}</div>
-                    <div class="profile-stats">
-                        <div class="stat-item">
-                            <div class="stat-value">{fairy_souls}</div>
-                            <div class="stat-label">Fairy Souls</div>
-                        </div>
-                    </div>
-                </div>
-                """, unsafe_allow_html=True)
-                
-                # Use a unique key for each button
-                button_key = f"process_{profile.get('profile_id', f'profile_{i}')}"
-                if st.button(f"Process {profile_name}", key=button_key):
-                    st.session_state.selected_profile = profile
-                    st.session_state.processing_status = "processing"
-                    st.rerun()
+        profile_name = profile.get('cute_name', f'Profile {i+1}')
+        game_mode = profile.get('game_mode', 'normal')
+        members = profile.get('members', {})
+        member_count = len(members)
+        
+        # Get basic stats from first member
+        fairy_souls = 0
+        if members:
+            first_member_uuid = list(members.keys())[0]
+            first_member_data = members.get(first_member_uuid, {})
+            fairy_souls = first_member_data.get('fairy_souls_collected', 0)
+        
+        # Create profile card
+        col1, col2 = st.columns([3, 1])
+        
+        with col1:
+            st.markdown(f"""
+            <div class="profile-card">
+                <div class="profile-name">{profile_name}</div>
+                <div><strong>Mode:</strong> {game_mode.title()}</div>
+                <div><strong>Members:</strong> {member_count}</div>
+                <div><strong>Fairy Souls:</strong> {fairy_souls}</div>
+            </div>
+            """, unsafe_allow_html=True)
+        
+        with col2:
+            st.markdown("<br><br>", unsafe_allow_html=True)
+            if st.button(f"Process {profile_name}", key=f"process_{i}", use_container_width=True):
+                st.session_state.selected_profile = profile
+                st.session_state.selected_profile_index = i
+                st.session_state.processing_status = "processing"
+                st.rerun()
 
 def process_selected_profile():
-    """Process the selected profile and display results"""
-    if st.session_state.selected_profile and st.session_state.processing_status == "processing":
-        st.markdown("## 🔄 Processing Profile")
+    """Process the selected profile with enhanced calculations"""
+    if (st.session_state.selected_profile and 
+        st.session_state.processing_status == "processing"):
         
-        with st.spinner("Processing profile data..."):
-            try:
-                # Get the selected profile
-                selected_profile = st.session_state.selected_profile
-                
-                # Extract the player data for the selected profile
-                # The player data is in the 'members' section of the profile
-                members = selected_profile.get('members', {})
-                player_uuid = list(members.keys())[0] if members else None
-                player_data = members.get(player_uuid, {}) if player_uuid else {}
-                
-                # Process the profile data
-                processor = ProfileProcessor(player_data, selected_profile)
-                processed_data = processor.process_all_data()
-                st.session_state.processed_data = processed_data
-                st.session_state.processing_status = "completed"
-                
-                st.success(f"✅ Profile '{selected_profile.get('cute_name', 'Unknown')}' processed successfully!")
-                
-            except Exception as e:
-                st.error(f"❌ Error processing profile: {str(e)}")
+        st.markdown("## 🔄 Processing Profile Data")
+        
+        # Create progress indicator
+        progress_bar = st.progress(0)
+        status_text = st.empty()
+        
+        try:
+            selected_profile = st.session_state.selected_profile
+            
+            # Step 1: Extract player data
+            status_text.text("Extracting player data...")
+            progress_bar.progress(20)
+            
+            members = selected_profile.get('members', {})
+            if not members:
+                st.error("❌ No member data found in profile")
                 st.session_state.processing_status = None
-                traceback.print_exc()
+                return
+                
+            player_uuid = list(members.keys())[0]
+            player_data = members.get(player_uuid, {})
+            st.session_state.player_uuid = player_uuid
+            
+            # Step 2: Initialize processor
+            status_text.text("Initializing data processor...")
+            progress_bar.progress(40)
+            
+            processor = ProfileProcessor(player_data, selected_profile)
+            
+            # Step 3: Process basic data
+            status_text.text("Processing skills, slayers, dungeons...")
+            progress_bar.progress(60)
+            
+            processed_data = processor.process_all_data()
+            
+            # Step 4: Add enhanced calculations if available
+            if SKYHELPER_AVAILABLE:
+                status_text.text("Calculating detailed networth...")
+                progress_bar.progress(75)
+                try:
+                    skyhelper = SkyHelperNetworth()
+                    processed_data['detailed_networth'] = skyhelper.calculate_networth(player_data)
+                except Exception as e:
+                    st.warning(f"SkyHelper networth calculation failed: {e}")
+            
+            if ELITE_FARMING_AVAILABLE:
+                status_text.text("Computing farming weight...")
+                progress_bar.progress(85)
+                try:
+                    elite_farming = EliteFarmingWeight()
+                    processed_data['farming_weight'] = elite_farming.calculate_farming_weight(player_data)
+                except Exception as e:
+                    st.warning(f"Elite farming weight calculation failed: {e}")
+            
+            if NEU_AVAILABLE:
+                status_text.text("Enhancing item data...")
+                progress_bar.progress(95)
+                try:
+                    neu_repo = NEURepository()
+                    processed_data['enhanced_items'] = neu_repo.enhance_item_data(
+                        player_data.get('inv_contents', {})
+                    )
+                except Exception as e:
+                    st.warning(f"NEU item enhancement failed: {e}")
+            
+            # Step 5: Finalize
+            status_text.text("Finalizing data...")
+            progress_bar.progress(100)
+            
+            st.session_state.processed_data = processed_data
+            st.session_state.processing_status = "completed"
+            st.session_state.export_ready = True
+            
+            # Clear progress indicators
+            progress_bar.empty()
+            status_text.empty()
+            
+            st.markdown('<div class="status-success">✅ Profile processed successfully!</div>', 
+                       unsafe_allow_html=True)
+            
+        except Exception as e:
+            st.markdown(f'<div class="status-error">❌ Error processing profile: {str(e)}</div>', 
+                       unsafe_allow_html=True)
+            st.session_state.processing_status = None
+            traceback.print_exc()
 
 def display_processed_data():
-    """Display processed profile data"""
-    if st.session_state.processed_data and st.session_state.processing_status == "completed":
-        st.markdown("## 📊 Processed Profile Data")
+    """Display processed profile data with enhanced metrics"""
+    if (st.session_state.processed_data and 
+        st.session_state.processing_status == "completed"):
+        
+        st.markdown("## 📊 Profile Analytics")
         
         processed_data = st.session_state.processed_data
         
-        # Display profile info
-        profile_info = processed_data.get('profile_info', {})
-        if profile_info and profile_info.get('data'):
-            info = profile_info['data'][0]
-            st.markdown(f"### {info.get('profile_name', 'Unknown Profile')}")
-            col1, col2, col3 = st.columns(3)
-            with col1:
-                st.metric("Game Mode", info.get('game_mode', 'Unknown'))
-            with col2:
-                st.metric("Fairy Souls", info.get('fairy_souls', 0))
-            with col3:
-                st.metric("Last Save", info.get('last_save', 'Unknown'))
+        # Enhanced metrics display
+        col1, col2, col3, col4 = st.columns(4)
+        
+        with col1:
+            # Skills average
+            skills_data = processed_data.get('skills', {})
+            skill_avg = skills_data.get('average', 0) if skills_data else 0
+            st.markdown(f"""
+            <div class="metric-highlight">
+                <h3 style="margin: 0; color: #1f77b4;">⭐ Skills</h3>
+                <h2 style="margin: 0;">{skill_avg:.2f}</h2>
+                <p style="margin: 0; color: #666;">Average Level</p>
+            </div>
+            """, unsafe_allow_html=True)
+        
+        with col2:
+            # Networth
+            networth_data = processed_data.get('networth', {})
+            if 'detailed_networth' in processed_data:
+                networth = processed_data['detailed_networth'].get('total', 0)
+            else:
+                networth = networth_data.get('total', 0) if networth_data else 0
+            
+            st.markdown(f"""
+            <div class="metric-highlight">
+                <h3 style="margin: 0; color: #ff7f0e;">💰 Networth</h3>
+                <h2 style="margin: 0;">{networth:,.0f}</h2>
+                <p style="margin: 0; color: #666;">Total Coins</p>
+            </div>
+            """, unsafe_allow_html=True)
+        
+        with col3:
+            # Farming weight
+            if 'farming_weight' in processed_data:
+                farming_weight = processed_data['farming_weight'].get('total_weight', 0)
+            else:
+                farming_weight = 0
+            
+            st.markdown(f"""
+            <div class="metric-highlight">
+                <h3 style="margin: 0; color: #2ca02c;">🌾 Farming</h3>
+                <h2 style="margin: 0;">{farming_weight:,.0f}</h2>
+                <p style="margin: 0; color: #666;">Weight</p>
+            </div>
+            """, unsafe_allow_html=True)
+        
+        with col4:
+            # Slayer progress
+            slayers_data = processed_data.get('slayers', {})
+            slayer_xp = slayers_data.get('summary', {}).get('total_slayer_xp', 0) if slayers_data else 0
+            
+            st.markdown(f"""
+            <div class="metric-highlight">
+                <h3 style="margin: 0; color: #d62728;">🗡️ Slayers</h3>
+                <h2 style="margin: 0;">{slayer_xp:,.0f}</h2>
+                <p style="margin: 0; color: #666;">Total XP</p>
+            </div>
+            """, unsafe_allow_html=True)
+        
+        # Data preview tabs
+        st.markdown("## 🔍 Data Preview")
+        
+        tab1, tab2, tab3, tab4, tab5 = st.tabs([
+            "⭐ Skills", "🗡️ Slayers", "⚔️ Dungeons", "🎒 Inventory", "📚 Collections"
+        ])
+        
+        with tab1:
+            skills_data = processed_data.get('skills', {})
+            if skills_data and 'data' in skills_data and skills_data['data']:
+                df = pd.DataFrame(skills_data['data'])
+                st.dataframe(df, use_container_width=True)
+            else:
+                st.info("No skills data available")
+        
+        with tab2:
+            slayers_data = processed_data.get('slayers', {})
+            if slayers_data and 'data' in slayers_data and slayers_data['data']:
+                df = pd.DataFrame(slayers_data['data'])
+                st.dataframe(df, use_container_width=True)
+            else:
+                st.info("No slayers data available")
+        
+        with tab3:
+            dungeons_data = processed_data.get('dungeons', {})
+            if dungeons_data and 'data' in dungeons_data and dungeons_data['data']:
+                df = pd.DataFrame(dungeons_data['data'])
+                st.dataframe(df, use_container_width=True)
+            else:
+                st.info("No dungeons data available")
+        
+        with tab4:
+            inventory_data = processed_data.get('inventory', {})
+            if inventory_data and 'data' in inventory_data and inventory_data['data']:
+                df = pd.DataFrame(inventory_data['data'])
+                st.dataframe(df, use_container_width=True)
+            else:
+                st.info("No inventory data available")
+        
+        with tab5:
+            collections_data = processed_data.get('collections', {})
+            if collections_data and 'data' in collections_data and collections_data['data']:
+                df = pd.DataFrame(collections_data['data'])
+                st.dataframe(df, use_container_width=True)
+            else:
+                st.info("No collections data available")
 
 def display_export_options():
-    """Display export options for processed data"""
-    if st.session_state.processed_data and st.session_state.processing_status == "completed":
-        st.markdown("## 📤 Export Options")
+    """Display enhanced export options"""
+    if (st.session_state.processed_data and 
+        st.session_state.processing_status == "completed"):
         
-        with st.container():
-            st.markdown('<div class="export-section">', unsafe_allow_html=True)
-            st.markdown("### Choose Export Format")
-            
-            col1, col2, col3, col4 = st.columns(4)
-            
-            with col1:
-                if st.button("📊 Excel", key="export_excel", use_container_width=True):
-                    try:
+        st.markdown('<div class="export-section">', unsafe_allow_html=True)
+        st.markdown("## 📤 Export Your Data")
+        
+        # Profile name for filenames
+        profile_name = "skyblock_profile"
+        if st.session_state.selected_profile:
+            profile_name = st.session_state.selected_profile.get('cute_name', 'profile').replace(' ', '_').replace('/', '_')
+        
+        # Export format selection
+        st.markdown("### Choose Export Format")
+        
+        # Export buttons
+        col1, col2, col3, col4 = st.columns(4)
+        
+        with col1:
+            if st.button("📊 Excel Export", key="export_excel", use_container_width=True):
+                try:
+                    with st.spinner("Generating Excel file..."):
                         exporter = ExcelExporter(st.session_state.processed_data)
                         excel_data = exporter.create_workbook()
                         
                         st.download_button(
-                            label="Download Excel File",
+                            label="⬇️ Download Excel File",
                             data=excel_data,
-                            file_name=f"skyblock_profile_{st.session_state.selected_profile.get('cute_name', 'profile')}.xlsx",
-                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                            file_name=f"{profile_name}_export.xlsx",
+                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                            use_container_width=True
                         )
-                    except Exception as e:
-                        st.error(f"Error exporting to Excel: {str(e)}")
-                        traceback.print_exc()
-            
-            with col2:
-                if st.button("🔧 JSON", key="export_json", use_container_width=True):
-                    try:
+                        st.success("Excel file generated!")
+                except Exception as e:
+                    st.error(f"Excel export error: {str(e)}")
+                    with st.expander("Error Details"):
+                        st.code(traceback.format_exc())
+        
+        with col2:
+            if st.button("🔧 JSON Export", key="export_json", use_container_width=True):
+                try:
+                    with st.spinner("Generating JSON file..."):
                         exporter = JSONExporter(st.session_state.processed_data)
                         json_data = exporter.create_export()
                         
                         st.download_button(
-                            label="Download JSON File",
+                            label="⬇️ Download JSON File",
                             data=json_data,
-                            file_name=f"skyblock_profile_{st.session_state.selected_profile.get('cute_name', 'profile')}.json",
-                            mime="application/json"
+                            file_name=f"{profile_name}_data.json",
+                            mime="application/json",
+                            use_container_width=True
                         )
-                    except Exception as e:
-                        st.error(f"Error exporting to JSON: {str(e)}")
-                        traceback.print_exc()
-            
-            with col3:
-                if st.button("📈 CSV", key="export_csv", use_container_width=True):
-                    try:
+                        st.success("JSON file generated!")
+                except Exception as e:
+                    st.error(f"JSON export error: {str(e)}")
+                    with st.expander("Error Details"):
+                        st.code(traceback.format_exc())
+        
+        with col3:
+            if st.button("📈 CSV Export", key="export_csv", use_container_width=True):
+                try:
+                    with st.spinner("Generating CSV file..."):
                         exporter = CSVExporter(st.session_state.processed_data)
                         csv_data = exporter.create_combined_csv()
                         
                         st.download_button(
-                            label="Download CSV File",
+                            label="⬇️ Download CSV File",
                             data=csv_data,
-                            file_name=f"skyblock_profile_{st.session_state.selected_profile.get('cute_name', 'profile')}.csv",
-                            mime="text/csv"
+                            file_name=f"{profile_name}_data.csv",
+                            mime="text/csv",
+                            use_container_width=True
                         )
-                    except Exception as e:
-                        st.error(f"Error exporting to CSV: {str(e)}")
-                        traceback.print_exc()
-            
-            with col4:
-                if st.button("📄 PDF", key="export_pdf", use_container_width=True):
-                    try:
+                        st.success("CSV file generated!")
+                except Exception as e:
+                    st.error(f"CSV export error: {str(e)}")
+                    with st.expander("Error Details"):
+                        st.code(traceback.format_exc())
+        
+        with col4:
+            if st.button("📄 PDF Report", key="export_pdf", use_container_width=True):
+                try:
+                    with st.spinner("Generating PDF report..."):
                         exporter = PDFExporter(st.session_state.processed_data)
                         pdf_data = exporter.create_report()
                         
                         st.download_button(
-                            label="Download PDF Report",
+                            label="⬇️ Download PDF Report",
                             data=pdf_data,
-                            file_name=f"skyblock_profile_{st.session_state.selected_profile.get('cute_name', 'profile')}.pdf",
-                            mime="application/pdf"
+                            file_name=f"{profile_name}_report.pdf",
+                            mime="application/pdf",
+                            use_container_width=True
                         )
-                    except Exception as e:
-                        st.error(f"Error exporting to PDF: {str(e)}")
-                        traceback.print_exc()
-            
-            st.markdown('</div>', unsafe_allow_html=True)
+                        st.success("PDF report generated!")
+                except Exception as e:
+                    st.error(f"PDF export error: {str(e)}")
+                    with st.expander("Error Details"):
+                        st.code(traceback.format_exc())
+        
+        st.markdown('</div>', unsafe_allow_html=True)
 
 def main():
-    """Enhanced main application function"""
+    """Main application function - FULLY FUNCTIONAL"""
     initialize_session_state()
     
+    # Header
     st.markdown('<h1 class="main-header">🚀 Sky-Port</h1>', unsafe_allow_html=True)
-    st.markdown('<p style="text-align: center; font-size: 1.2rem; color: #666;">Comprehensive Hypixel SkyBlock Profile Exporter</p>', unsafe_allow_html=True)
+    st.markdown('<p style="text-align: center; font-size: 1.2rem; color: #666; margin-bottom: 2rem;">Comprehensive Hypixel SkyBlock Profile Exporter</p>', unsafe_allow_html=True)
     
-    with st.expander("🔑 Configuration", expanded=True):
+    # Show feature status
+    display_feature_status()
+    
+    # API Configuration
+    with st.expander("🔑 API Configuration", expanded=not st.session_state.get('skyblock_profiles')):
         api_key = st.text_input(
             "Hypixel API Key",
             type="password",
             help="Get your API key by typing /api new in Hypixel",
+            value=st.secrets.get("hypixel_api_key", "") if hasattr(st, 'secrets') and "hypixel_api_key" in st.secrets else ""
         )
+        
         if not api_key:
             st.warning("⚠️ Please enter your Hypixel API key to continue.")
             st.info("💡 Get your API key by typing `/api new` in Hypixel chat.")
+            st.markdown("""<div style="background: #e3f2fd; padding: 1rem; border-radius: 8px; margin: 1rem 0;">
+            <h4>How to get your API key:</h4>
+            <ol>
+                <li>Join Hypixel server</li>
+                <li>Type <code>/api new</code> in chat</li>
+                <li>Copy the generated key</li>
+                <li>Paste it above</li>
+            </ol>
+            </div>""", unsafe_allow_html=True)
             return
+    
+    # Player lookup
+    st.markdown("## 🎮 Player Lookup")
     
     col1, col2 = st.columns([3, 1])
     with col1:
-        username = st.text_input("🎮 Player Username", placeholder="Enter Minecraft username...")
+        username = st.text_input(
+            "Minecraft Username",
+            placeholder="Enter username (e.g., Technoblade, Dream, etc.)",
+            help="Enter any Minecraft username to fetch their SkyBlock profiles"
+        )
+    
     with col2:
         st.markdown("<br>", unsafe_allow_html=True)
-        fetch_button = st.button("🔍 Fetch Profile", type="primary", use_container_width=True)
+        fetch_button = st.button("🔍 Fetch Profiles", type="primary", use_container_width=True)
     
+    # Fetch player profiles
     if fetch_button and username:
-        with st.spinner("Fetching player profiles..."):
-            # ADD THIS TRY...EXCEPT BLOCK
+        with st.spinner("🔍 Fetching player profiles..."):
             try:
+                # Initialize API clients
                 mojang_client = MojangAPI()
                 hypixel_client = HypixelAPI(api_key)
                 
+                # Get UUID
                 uuid_data = mojang_client.get_uuid(username)
                 if not uuid_data:
-                    st.error("❌ Player not found!")
+                    st.error("❌ Player not found! Please check the username.")
                     return
-                    
-                uuid = uuid_data['id']
                 
+                uuid = uuid_data['id']
+                st.session_state.player_uuid = uuid
+                
+                # Get player and profile data
                 player_data = hypixel_client.get_player(uuid)
                 skyblock_data = hypixel_client.get_skyblock_profiles(uuid)
                 
                 if not skyblock_data or 'profiles' not in skyblock_data or not skyblock_data['profiles']:
                     st.error("❌ No SkyBlock profiles found for this player.")
+                    st.info("This player may not have played SkyBlock or their profiles are private.")
                     return
                 
                 st.session_state.player_data = player_data
                 st.session_state.skyblock_profiles = skyblock_data['profiles']
-                st.success("✅ Profiles fetched successfully!")
-
-            # CATCH THE SPECIFIC ERRORS
+                
+                st.success(f"✅ Found {len(skyblock_data['profiles'])} profile(s) for {username}!")
+                
             except (PlayerNotFoundError, InvalidAPIKeyError, RateLimitError, MojangAPIError, HypixelAPIError) as e:
                 st.error(f"❌ {str(e)}")
                 return
             except Exception as e:
-                st.error(f"❌ An unexpected error occurred: {str(e)}")
-                traceback.print_exc() # For debugging
+                st.error(f"❌ Unexpected error: {str(e)}")
+                with st.expander("Error Details (for debugging)"):
+                    st.code(traceback.format_exc())
                 return
     
-    # Display profiles if they've been fetched
-    if st.session_state.skyblock_profiles:
+    # Display profiles if available
+    if st.session_state.get('skyblock_profiles'):
         display_profiles(st.session_state.skyblock_profiles)
     
-    # Process selected profile if needed
+    # Process selected profile
     process_selected_profile()
     
-    # Display processed data if available
+    # Display results and export options
     display_processed_data()
-    
-    # Display export options if data is processed
     display_export_options()
+    
+    # Footer
+    st.markdown("---")
+    col1, col2, col3 = st.columns([1, 2, 1])
+    with col2:
+        st.markdown("<p style='text-align: center; color: #666;'>Built with ❤️ for the Hypixel SkyBlock community | Sky-Port v2.0.0</p>", unsafe_allow_html=True)
 
 if __name__ == "__main__":
     main()
